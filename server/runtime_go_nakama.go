@@ -33,7 +33,6 @@ import (
 	"github.com/heroiclabs/nakama-common/rtapi"
 	"github.com/heroiclabs/nakama-common/runtime"
 	"github.com/heroiclabs/nakama/v3/internal/cronexpr"
-	"github.com/heroiclabs/nakama/v3/internal/satori"
 	"github.com/heroiclabs/nakama/v3/social"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -67,7 +66,7 @@ type RuntimeGoNakamaModule struct {
 	storageIndex         StorageIndex
 }
 
-func NewRuntimeGoNakamaModule(logger *zap.Logger, db *sql.DB, protojsonMarshaler *protojson.MarshalOptions, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, leaderboardRankCache LeaderboardRankCache, leaderboardScheduler LeaderboardScheduler, sessionRegistry SessionRegistry, sessionCache SessionCache, statusRegistry StatusRegistry, matchRegistry MatchRegistry, tracker Tracker, metrics Metrics, streamManager StreamManager, router MessageRouter, storageIndex StorageIndex) *RuntimeGoNakamaModule {
+func NewRuntimeGoNakamaModule(logger *zap.Logger, db *sql.DB, protojsonMarshaler *protojson.MarshalOptions, config Config, socialClient *social.Client, leaderboardCache LeaderboardCache, leaderboardRankCache LeaderboardRankCache, leaderboardScheduler LeaderboardScheduler, sessionRegistry SessionRegistry, sessionCache SessionCache, statusRegistry StatusRegistry, matchRegistry MatchRegistry, tracker Tracker, metrics Metrics, streamManager StreamManager, router MessageRouter, storageIndex StorageIndex, satoriClient runtime.Satori) *RuntimeGoNakamaModule {
 	return &RuntimeGoNakamaModule{
 		logger:               logger,
 		db:                   db,
@@ -89,14 +88,7 @@ func NewRuntimeGoNakamaModule(logger *zap.Logger, db *sql.DB, protojsonMarshaler
 
 		node: config.GetName(),
 
-		satori: satori.NewSatoriClient(
-			logger,
-			config.GetSatori().Url,
-			config.GetSatori().ApiKeyName,
-			config.GetSatori().ApiKey,
-			config.GetSatori().SigningKey,
-			config.GetSession().TokenExpirySec,
-		),
+		satori: satoriClient,
 	}
 }
 
@@ -1856,7 +1848,7 @@ func (n *RuntimeGoNakamaModule) NotificationsDeleteId(ctx context.Context, userI
 // @group notifications
 // @summary Update notifications by their id.
 // @param ctx(type=context.Context) The context object represents information about the server and requester.
-// @param userID(type=[]runtime.NotificationUpdate)
+// @param updates(type=[]runtime.NotificationUpdate)
 // @return error(error) An optional error value if an error occurred.
 func (n *RuntimeGoNakamaModule) NotificationsUpdate(ctx context.Context, updates ...runtime.NotificationUpdate) error {
 	nUpdates := make([]notificationUpdate, 0, len(updates))
@@ -4013,9 +4005,6 @@ func (n *RuntimeGoNakamaModule) Event(ctx context.Context, evt *api.Event) error
 	return nil
 }
 
-// @group events
-// @summary Process an event.
-// @param fn(type=RuntimeEventCustomFunction) The function that is called for each event.
 func (n *RuntimeGoNakamaModule) SetEventFn(fn RuntimeEventCustomFunction) {
 	n.Lock()
 	n.eventFn = fn

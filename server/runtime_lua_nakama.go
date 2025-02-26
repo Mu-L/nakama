@@ -49,7 +49,6 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 	"github.com/heroiclabs/nakama/v3/internal/cronexpr"
 	lua "github.com/heroiclabs/nakama/v3/internal/gopher-lua"
-	"github.com/heroiclabs/nakama/v3/internal/satori"
 	"github.com/heroiclabs/nakama/v3/social"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -94,7 +93,7 @@ type RuntimeLuaNakamaModule struct {
 	satori runtime.Satori
 }
 
-func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, protojsonMarshaler *protojson.MarshalOptions, protojsonUnmarshaler *protojson.UnmarshalOptions, config Config, version string, socialClient *social.Client, leaderboardCache LeaderboardCache, rankCache LeaderboardRankCache, leaderboardScheduler LeaderboardScheduler, sessionRegistry SessionRegistry, sessionCache SessionCache, statusRegistry StatusRegistry, matchRegistry MatchRegistry, tracker Tracker, metrics Metrics, streamManager StreamManager, router MessageRouter, once *sync.Once, localCache *RuntimeLuaLocalCache, storageIndex StorageIndex, matchCreateFn RuntimeMatchCreateFunction, eventFn RuntimeEventCustomFunction, registerCallbackFn func(RuntimeExecutionMode, string, *lua.LFunction), announceCallbackFn func(RuntimeExecutionMode, string)) *RuntimeLuaNakamaModule {
+func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, protojsonMarshaler *protojson.MarshalOptions, protojsonUnmarshaler *protojson.UnmarshalOptions, config Config, version string, socialClient *social.Client, leaderboardCache LeaderboardCache, rankCache LeaderboardRankCache, leaderboardScheduler LeaderboardScheduler, sessionRegistry SessionRegistry, sessionCache SessionCache, statusRegistry StatusRegistry, matchRegistry MatchRegistry, tracker Tracker, metrics Metrics, streamManager StreamManager, router MessageRouter, once *sync.Once, localCache *RuntimeLuaLocalCache, storageIndex StorageIndex, satoriClient runtime.Satori, matchCreateFn RuntimeMatchCreateFunction, eventFn RuntimeEventCustomFunction, registerCallbackFn func(RuntimeExecutionMode, string, *lua.LFunction), announceCallbackFn func(RuntimeExecutionMode, string)) *RuntimeLuaNakamaModule {
 	return &RuntimeLuaNakamaModule{
 		logger:               logger,
 		db:                   db,
@@ -126,14 +125,7 @@ func NewRuntimeLuaNakamaModule(logger *zap.Logger, db *sql.DB, protojsonMarshale
 		matchCreateFn: matchCreateFn,
 		eventFn:       eventFn,
 
-		satori: satori.NewSatoriClient(
-			logger,
-			config.GetSatori().Url,
-			config.GetSatori().ApiKeyName,
-			config.GetSatori().ApiKey,
-			config.GetSatori().SigningKey,
-			config.GetSession().TokenExpirySec,
-		),
+		satori: satoriClient,
 	}
 }
 
@@ -7442,6 +7434,7 @@ func (n *RuntimeLuaNakamaModule) leaderboardRecordsListCursorFromRank(l *lua.LSt
 // @param score(type=number, optional=true, default=0) The score to submit.
 // @param subscore(type=number, optional=true, default=0) A secondary subscore parameter for the submission.
 // @param metadata(type=table, optional=true) The metadata you want associated to this submission. Some good examples are weather conditions for a racing game.
+// @param overrideOperator(type=number, optional=true) An override operator for the new record. The accepted values include: 0 (no override), 1 (best), 2 (set), 3 (incr), 4 (decr).
 // @return record(table) The newly created leaderboard record.
 // @return error(error) An optional error value if an error occurred.
 func (n *RuntimeLuaNakamaModule) leaderboardRecordWrite(l *lua.LState) int {
@@ -10938,6 +10931,7 @@ func (n *RuntimeLuaNakamaModule) getSatori(l *lua.LState) int {
 // @param customProperties(type=table, optional=true, default=nil) Custom properties.
 // @param noSession(type=bool, optional=true, default=true) Whether authenticate should skip session tracking.
 // @param ip(type=string) Ip address.
+// @return properties(table)
 // @return error(error) An optional error value if an error occurred.
 func (n *RuntimeLuaNakamaModule) satoriAuthenticate(l *lua.LState) int {
 	identifier := l.CheckString(1)
@@ -10986,7 +10980,7 @@ func (n *RuntimeLuaNakamaModule) satoriAuthenticate(l *lua.LState) int {
 // @group satori
 // @summary Get identity properties.
 // @param id(type=string) The identifier of the identity.
-// @return properties(type=table) The identity properties.
+// @return properties(table) The identity properties.
 // @return error(error) An optional error value if an error occurred.
 func (n *RuntimeLuaNakamaModule) satoriPropertiesGet(l *lua.LState) int {
 	identifier := l.CheckString(1)
@@ -11079,6 +11073,7 @@ func (n *RuntimeLuaNakamaModule) satoriPropertiesUpdate(l *lua.LState) int {
 // @summary Publish an event.
 // @param id(type=string) The identifier of the identity.
 // @param events(type=table) An array of events to publish.
+// @param ip(type=string) Ip address.
 // @return error(error) An optional error value if an error occurred.
 func (n *RuntimeLuaNakamaModule) satoriEventsPublish(l *lua.LState) int {
 	identifier := l.CheckString(1)
@@ -11164,7 +11159,9 @@ func (n *RuntimeLuaNakamaModule) satoriEventsPublish(l *lua.LState) int {
 		return 0
 	}
 
-	if err := n.satori.EventsPublish(l.Context(), identifier, events); err != nil {
+	ip := l.OptString(3, "")
+
+	if err := n.satori.EventsPublish(l.Context(), identifier, events, ip); err != nil {
 		l.RaiseError("failed to satori publish event: %v", err.Error())
 		return 0
 	}
@@ -11224,7 +11221,7 @@ func (n *RuntimeLuaNakamaModule) satoriExperimentsList(l *lua.LState) int {
 
 // @group satori
 // @summary List flags.
-// @param id(type=string) The identifier of the identity.
+// @param id(type=string) The identifier of the identity. Set to empty string to fetch all default flag values.
 // @param names(type=table, optional=true, default=[]) Optional list of flag names to filter.
 // @return flags(table) The flag list.
 // @return error(error) An optional error value if an error occurred.
